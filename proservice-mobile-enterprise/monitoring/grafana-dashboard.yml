@@ -1,0 +1,134 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: proservice-mobile-dashboard
+  namespace: monitoring
+data:
+  dashboard.json: |
+    {
+      "dashboard": {
+        "title": "ProService Mobile Enterprise",
+        "tags": ["mobile", "production"],
+        "timezone": "Europe/Paris",
+        "refresh": "5s",
+        "time": {
+          "from": "now-1h",
+          "to": "now"
+        },
+        "panels": [
+          {
+            "title": "📱 Daily Active Users",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "firebase_daily_active_users",
+                "legendFormat": "DAU"
+              }
+            ],
+            "thresholds": [
+              {"color": "red", "value": 0},
+              {"color": "yellow", "value": 100},
+              {"color": "green", "value": 500}
+            ]
+          },
+          {
+            "title": "⚡ Screen Load Time",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "avg(screen_load_time_seconds)",
+                "legendFormat": "Average Load Time"
+              }
+            ],
+            "alert": {
+              "name": "Screen Load Alert",
+              "frequency": "1m",
+              "noDataState": "no_data",
+              "executionErrorState": "alerting",
+              "conditions": [
+                {
+                  "query": {"params": ["A", "2m", "now"]},
+                  "reducer": {"type": "avg"},
+                  "evaluator": {"type": "gt", "params": [2]}
+                }
+              ],
+              "notifications": [
+                {"uid": "slack-webhook"}
+              ]
+            }
+          },
+          {
+            "title": "💰 Payment Success Rate",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "rate(payment_success_total[5m]) / rate(payment_attempt_total[5m]) * 100",
+                "legendFormat": "Success Rate %"
+              }
+            ],
+            "thresholds": [
+              {"color": "red", "value": 0},
+              {"color": "yellow", "value": 95},
+              {"color": "green", "value": 99}
+            ]
+          },
+          {
+            "title": "🔐 Security Events",
+            "type": "table",
+            "targets": [
+              {
+                "expr": "security_events_total",
+                "legendFormat": "Events"
+              }
+            ],
+            "columns": [
+              {"text": "Time", "type": "time"},
+              {"text": "Event Type", "type": "string"},
+              {"text": "User ID", "type": "string"},
+              {"text": "Device", "type": "string"}
+            ]
+          },
+          {
+            "title": "📊 Business Metrics",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "bookings_completed_total",
+                "legendFormat": "Bookings"
+              },
+              {
+                "expr": "user_retention_day_1",
+                "legendFormat": "D1 Retention"
+              },
+              {
+                "expr": "user_retention_day_7",
+                "legendFormat": "D7 Retention"
+              }
+            ]
+          },
+          {
+            "title": "🚨 Crash Rate",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "firebase_crash_free_users_rate * 100",
+                "legendFormat": "Crash-Free Users %"
+              }
+            ],
+            "thresholds": [
+              {"color": "red", "value": 0},
+              {"color": "yellow", "value": 98},
+              {"color": "green", "value": 99.5}
+            ]
+          }
+        ],
+        "alerting": {
+          "alertmanagers": [
+            {
+              "name": "alertmanager",
+              "implementation": "prometheus"
+            }
+          ]
+        }
+      }
+    }

@@ -1,0 +1,98 @@
+version: '3.8'
+
+services:
+  mock-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.mock-api
+    ports:
+      - '3001:3001'
+    environment:
+      - NODE_ENV=development
+      - PORT=3001
+    volumes:
+      - ./mocks:/app/mocks
+      - ./logs:/app/logs
+    networks:
+      - proservice-network
+
+  firebase-emulator:
+    image: mtlynch/firebase-emulator
+    ports:
+      - '9099:9099'
+      - '5001:5001'
+      - '8080:8080'
+      - '9000:9000'
+      - '5000:5000'
+      - '9199:9199'
+    environment:
+      - FIREBASE_PROJECT_ID=proservice-mobile-dev
+      - FIREBASE_AUTH_EMULATOR_HOST=0.0.0.0:9099
+      - FIRESTORE_EMULATOR_HOST=0.0.0.0:8080
+      - FIREBASE_FUNCTIONS_EMULATOR_HOST=0.0.0.0:5001
+    volumes:
+      - firebase-data:/firebase/data
+    networks:
+      - proservice-network
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis-data:/data
+    networks:
+      - proservice-network
+
+  postgres:
+    image: postgres:15-alpine
+    ports:
+      - '5432:5432'
+    environment:
+      - POSTGRES_DB=proservice_dev
+      - POSTGRES_USER=proservice
+      - POSTGRES_PASSWORD=dev_password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - proservice-network
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - '3000:3000'
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana-dashboard.yml:/etc/grafana/provisioning/dashboards/dashboard.yml
+    depends_on:
+      - mock-api
+    networks:
+      - proservice-network
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - '9090:9090'
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    networks:
+      - proservice-network
+
+networks:
+  proservice-network:
+    driver: bridge
+
+volumes:
+  firebase-data:
+  redis-data:
+  postgres-data:
+  grafana-data:
+  prometheus-data:
