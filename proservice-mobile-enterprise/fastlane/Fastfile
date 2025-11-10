@@ -1,0 +1,81 @@
+# frozen_string_literal: true
+
+fastlane_version '2.219.0'
+
+def validate_mobile_env!
+  required = %w[
+    FIREBASE_API_KEY
+    GOOGLE_MAPS_API_KEY
+    STRIPE_PUBLISHABLE_KEY
+    SENTRY_DSN
+    APPSTORE_CONNECT_API_KEY
+    PLAYSTORE_SERVICE_ACCOUNT
+    MATCH_PASSWORD
+    KEYSTORE_PASSWORD
+  ]
+
+  missing = required.reject { |key| ENV[key] && !ENV[key].empty? }
+  unless missing.empty?
+    UI.user_error!("Missing required environment variables: #{missing.join(', ')}")
+  end
+end
+
+def notify_team(status:, platform:, artifact: nil)
+  UI.message("[Notification] #{platform} deployment #{status}. Artifact: #{artifact || 'n/a'}")
+  # TODO: integrate with Slack/Teams/Email
+end
+
+platform :android do
+  desc 'Build and deploy Android AAB to the Play Store'
+  lane :deploy_android do
+    validate_mobile_env!
+
+    gradle(task: 'clean')
+    gradle(task: 'bundle', build_type: 'Release', project_dir: './android')
+
+    aab_path = File.join('android', 'app', 'build', 'outputs', 'bundle', 'release', 'app-release.aab')
+    unless File.exist?(aab_path)
+      UI.user_error!("Android AAB not found at #{aab_path}")
+    end
+
+    upload_to_play_store(
+      track: 'internal',
+      aab: aab_path,
+      json_key_data: ENV['PLAYSTORE_SERVICE_ACCOUNT']
+    )
+
+    notify_team(status: 'succeeded', platform: 'android', artifact: aab_path)
+  rescue => e
+    notify_team(status: "failed (#{e.message})", platform: 'android')
+    raise
+  end
+end
+
+platform :ios do
+  desc 'Build and deploy iOS IPA to the App Store'
+  lane :deploy_ios do
+    validate_mobile_env!
+
+    cocoapods
+
+    build_app(
+      workspace: 'ios/ProService.xcworkspace',
+      scheme: 'ProService',
+      export_xcargs: '-allowProvisioningUpdates',
+      export_method: 'app-store'
+    )
+
+    ipa_path = Actions.lane_context[SharedValues::IPA_OUTPUT_PATH]
+    UI.user_error!('IPA output path not found') unless ipa_path && File.exist?(ipa_path)
+
+    upload_to_app_store(
+      ipa: ipa_path,
+      api_key_path: ENV['APPSTORE_CONNECT_API_KEY']
+    )
+
+    notify_team(status: 'succeeded', platform: 'ios', artifact: ipa_path)
+  rescue => e
+    notify_team(status: "failed (#{e.message})", platform: 'ios')
+    raise
+  end
+end

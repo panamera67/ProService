@@ -1,0 +1,25 @@
+version: '3.9'
+
+services:
+  mock-api:
+    image: node:18
+    container_name: proservice-mock-api
+    working_dir: /app
+    volumes:
+      - ./tools/mock-server:/app
+    ports:
+      - "3001:3001"
+    command: ["node", "mock-server.js"]
+    environment:
+      NODE_ENV: development
+  
+  mock-firebase:
+    image: mtlynch/firebase-emulator:latest
+    container_name: proservice-mock-firebase
+    ports:
+      - "9099:9099"
+      - "8080:8080"
+      - "5001:5001"
+    environment:
+      FIREBASE_PROJECT_ID: proservice-mobile-dev
+    command: ["start", "--project", "proservice-mobile-dev"]
