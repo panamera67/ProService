@@ -1,112 +1,134 @@
-apiVersion: 1
-providers:
-  - name: proservice-mobile
-    orgId: 1
-    folder: ProService
-    type: file
-    disableDeletion: false
-    updateIntervalSeconds: 30
-    options:
-      path: dashboards
-
-dashboards:
-  - uid: mobile-performance
-    title: "🚀 ProService Mobile – Performance"
-    timezone: browser
-    tags: [mobile, performance, realtime]
-    refresh: 30s
-    panels:
-      - id: 1
-        title: Screen Load Time
-        type: timeseries
-        targets:
-          - expr: avg_over_time(proservice_screen_load_ms{env="prod"}[5m])
-        thresholds:
-          - color: "red"
-            value: 2000
-        unit: ms
-      - id: 2
-        title: API Latency
-        type: timeseries
-        targets:
-          - expr: avg_over_time(proservice_api_latency_ms{env="prod"}[5m])
-        thresholds:
-          - color: "orange"
-            value: 1000
-        unit: ms
-      - id: 3
-        title: Crash-Free Users
-        type: stat
-        targets:
-          - expr: (1 - proservice_crash_users_total / proservice_active_users_total) * 100
-        thresholds:
-          - color: "red"
-            value: 99
-        unit: percent
-      - id: 4
-        title: Memory Usage
-        type: timeseries
-        targets:
-          - expr: avg_over_time(proservice_memory_usage_mb{env="prod"}[5m])
-        thresholds:
-          - color: "red"
-            value: 500
-        unit: MB
-
-  - uid: mobile-business
-    title: "📈 ProService Mobile – Business"
-    timezone: browser
-    tags: [mobile, business]
-    refresh: 1m
-    panels:
-      - id: 10
-        title: Daily Active Users
-        type: bar-gauge
-        targets:
-          - expr: proservice_dau_total{env="prod"}
-      - id: 11
-        title: Booking Conversion Rate
-        type: stat
-        targets:
-          - expr: (proservice_bookings_completed_total / proservice_sessions_total) * 100
-        unit: percent
-      - id: 12
-        title: Payment Success Rate
-        type: stat
-        targets:
-          - expr: (proservice_payments_success_total / proservice_payments_total) * 100
-        unit: percent
-      - id: 13
-        title: Retention D1 / D7 / D30
-        type: table
-        targets:
-          - expr: proservice_retention_ratio{window=~"D1|D7|D30"}
-
-  - uid: mobile-security
-    title: "🔐 ProService Mobile – Security"
-    timezone: browser
-    tags: [mobile, security]
-    refresh: 30s
-    panels:
-      - id: 20
-        title: Failed Login Attempts
-        type: timeseries
-        targets:
-          - expr: rate(proservice_auth_failed_total{env="prod"}[5m])
-        unit: per_minute
-      - id: 21
-        title: SSL Pinning Failures
-        type: timeseries
-        targets:
-          - expr: rate(proservice_ssl_pinning_failure_total{env="prod"}[5m])
-      - id: 22
-        title: Biometric Auth Success Rate
-        type: stat
-        targets:
-          - expr: (proservice_biometric_success_total / proservice_biometric_attempt_total) * 100
-        unit: percent
-      - id: 23
-        title: Tamper Detection Events
-        type: timeseries
-        targets:
-          - expr: rate(proservice_tamper_detection_total{env="prod"}[5m])
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: proservice-mobile-dashboard
+  namespace: monitoring
+data:
+  dashboard.json: |
+    {
+      "dashboard": {
+        "title": "ProService Mobile Enterprise",
+        "tags": ["mobile", "production"],
+        "timezone": "Europe/Paris",
+        "refresh": "5s",
+        "time": {
+          "from": "now-1h",
+          "to": "now"
+        },
+        "panels": [
+          {
+            "title": "📱 Daily Active Users",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "firebase_daily_active_users",
+                "legendFormat": "DAU"
+              }
+            ],
+            "thresholds": [
+              {"color": "red", "value": 0},
+              {"color": "yellow", "value": 100},
+              {"color": "green", "value": 500}
+            ]
+          },
+          {
+            "title": "⚡ Screen Load Time",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "avg(screen_load_time_seconds)",
+                "legendFormat": "Average Load Time"
+              }
+            ],
+            "alert": {
+              "name": "Screen Load Alert",
+              "frequency": "1m",
+              "noDataState": "no_data",
+              "executionErrorState": "alerting",
+              "conditions": [
+                {
+                  "query": {"params": ["A", "2m", "now"]},
+                  "reducer": {"type": "avg"},
+                  "evaluator": {"type": "gt", "params": [2]}
+                }
+              ],
+              "notifications": [
+                {"uid": "slack-webhook"}
+              ]
+            }
+          },
+          {
+            "title": "💰 Payment Success Rate",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "rate(payment_success_total[5m]) / rate(payment_attempt_total[5m]) * 100",
+                "legendFormat": "Success Rate %"
+              }
+            ],
+            "thresholds": [
+              {"color": "red", "value": 0},
+              {"color": "yellow", "value": 95},
+              {"color": "green", "value": 99}
+            ]
+          },
+          {
+            "title": "🔐 Security Events",
+            "type": "table",
+            "targets": [
+              {
+                "expr": "security_events_total",
+                "legendFormat": "Events"
+              }
+            ],
+            "columns": [
+              {"text": "Time", "type": "time"},
+              {"text": "Event Type", "type": "string"},
+              {"text": "User ID", "type": "string"},
+              {"text": "Device", "type": "string"}
+            ]
+          },
+          {
+            "title": "📊 Business Metrics",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "bookings_completed_total",
+                "legendFormat": "Bookings"
+              },
+              {
+                "expr": "user_retention_day_1",
+                "legendFormat": "D1 Retention"
+              },
+              {
+                "expr": "user_retention_day_7",
+                "legendFormat": "D7 Retention"
+              }
+            ]
+          },
+          {
+            "title": "🚨 Crash Rate",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "firebase_crash_free_users_rate * 100",
+                "legendFormat": "Crash-Free Users %"
+              }
+            ],
+            "thresholds": [
+              {"color": "red", "value": 0},
+              {"color": "yellow", "value": 98},
+              {"color": "green", "value": 99.5}
+            ]
+          }
+        ],
+        "alerting": {
+          "alertmanagers": [
+            {
+              "name": "alertmanager",
+              "implementation": "prometheus"
+            }
+          ]
+        }
+      }
+    }

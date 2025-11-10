@@ -1,81 +1,157 @@
-# frozen_string_literal: true
+default_platform(:android)
 
-fastlane_version '2.219.0'
+def notify_team(message)
+  return unless ENV['SLACK_WEBHOOK_URL']
 
-def validate_mobile_env!
-  required = %w[
-    FIREBASE_API_KEY
-    GOOGLE_MAPS_API_KEY
-    STRIPE_PUBLISHABLE_KEY
-    SENTRY_DSN
-    APPSTORE_CONNECT_API_KEY
-    PLAYSTORE_SERVICE_ACCOUNT
-    MATCH_PASSWORD
-    KEYSTORE_PASSWORD
-  ]
-
-  missing = required.reject { |key| ENV[key] && !ENV[key].empty? }
-  unless missing.empty?
-    UI.user_error!("Missing required environment variables: #{missing.join(', ')}")
-  end
+  slack(
+    message: message,
+    channel: '#mobile-releases',
+    slack_url: ENV['SLACK_WEBHOOK_URL']
+  )
 end
 
-def notify_team(status:, platform:, artifact: nil)
-  UI.message("[Notification] #{platform} deployment #{status}. Artifact: #{artifact || 'n/a'}")
-  # TODO: integrate with Slack/Teams/Email
+def handle_error(exception, context)
+  UI.error("❌ #{context}: #{exception.message}")
+
+  if ENV['SLACK_WEBHOOK_URL']
+    slack(
+      message: "🚨 #{context} failed: #{exception.message}",
+      channel: '#mobile-alerts',
+      slack_url: ENV['SLACK_WEBHOOK_URL'],
+      success: false
+    )
+  end
+
+  raise exception
 end
 
 platform :android do
-  desc 'Build and deploy Android AAB to the Play Store'
+  desc '🚀 Deploy Android to Play Store'
   lane :deploy_android do
-    validate_mobile_env!
+    begin
+      validate_environment_android
+      increment_version_code
+      build_android_aab
 
-    gradle(task: 'clean')
-    gradle(task: 'bundle', build_type: 'Release', project_dir: './android')
+      upload_to_play_store(
+        track: 'production',
+        release_status: 'draft',
+        aab: 'android/app/build/outputs/bundle/release/app-release.aab',
+        skip_upload_metadata: false,
+        skip_upload_images: false,
+        skip_upload_screenshots: false
+      )
 
-    aab_path = File.join('android', 'app', 'build', 'outputs', 'bundle', 'release', 'app-release.aab')
-    unless File.exist?(aab_path)
-      UI.user_error!("Android AAB not found at #{aab_path}")
+      notify_team('🤖 Android déployé en production')
+    rescue => exception
+      handle_error(exception, 'Android deployment failed')
+    end
+  end
+
+  desc '🔐 Validate Android environment'
+  lane :validate_environment_android do
+    unless ENV['KEYSTORE_PATH'] && File.exist?(ENV['KEYSTORE_PATH'])
+      UI.user_error!("Keystore manquant: #{ENV['KEYSTORE_PATH'] || 'non défini'}")
     end
 
-    upload_to_play_store(
-      track: 'internal',
-      aab: aab_path,
-      json_key_data: ENV['PLAYSTORE_SERVICE_ACCOUNT']
+    unless ENV['PLAYSTORE_SERVICE_ACCOUNT']
+      UI.user_error!('PLAYSTORE_SERVICE_ACCOUNT manquant')
+    end
+
+    UI.success('✅ Environnement Android validé')
+  end
+
+  desc '📈 Increment version code'
+  lane :increment_version_code do
+    path = 'android/app/build.gradle'
+    re = /versionCode\s+(\d+)/
+
+    contents = File.read(path)
+    current_code = contents[re, 1].to_i
+    new_code = current_code + 1
+    updated = contents.sub(re, "versionCode #{new_code}")
+
+    File.write(path, updated)
+    UI.success("✅ Version code incrémenté: #{new_code}")
+  end
+
+  desc '🏗️ Build Android AAB'
+  lane :build_android_aab do
+    gradle(
+      task: 'bundleRelease',
+      project_dir: 'android/',
+      properties: {
+        'android.injected.signing.store.file' => ENV['KEYSTORE_PATH'],
+        'android.injected.signing.store.password' => ENV['KEYSTORE_PASSWORD'],
+        'android.injected.signing.key.alias' => ENV['KEY_ALIAS'],
+        'android.injected.signing.key.password' => ENV['KEY_PASSWORD']
+      }
     )
 
-    notify_team(status: 'succeeded', platform: 'android', artifact: aab_path)
-  rescue => e
-    notify_team(status: "failed (#{e.message})", platform: 'android')
-    raise
+    UI.success('✅ AAB buildé avec succès')
   end
 end
 
 platform :ios do
-  desc 'Build and deploy iOS IPA to the App Store'
+  desc '🚀 Deploy iOS to App Store'
   lane :deploy_ios do
-    validate_mobile_env!
+    begin
+      validate_environment_ios
+      increment_ios_build_number
+      build_ios_ipa
 
-    cocoapods
+      upload_to_app_store(
+        force: true,
+        skip_metadata: false,
+        skip_screenshots: false,
+        submit_for_review: false,
+        automatic_release: false
+      )
 
-    build_app(
-      workspace: 'ios/ProService.xcworkspace',
-      scheme: 'ProService',
-      export_xcargs: '-allowProvisioningUpdates',
-      export_method: 'app-store'
+      notify_team('🍎 iOS déployé en production')
+    rescue => exception
+      handle_error(exception, 'iOS deployment failed')
+    end
+  end
+
+  desc '🔐 Validate iOS environment'
+  lane :validate_environment_ios do
+    UI.user_error!('MATCH_PASSWORD manquant') unless ENV['MATCH_PASSWORD']
+    UI.user_error!('APPSTORE_CONNECT_API_KEY manquant') unless ENV['APPSTORE_CONNECT_API_KEY']
+
+    UI.success('✅ Environnement iOS validé')
+  end
+
+  desc '📈 Increment build number'
+  lane :increment_ios_build_number do
+    next_build = latest_testflight_build_number + 1
+
+    increment_build_number_in_plist(
+      xcodeproj: 'ios/ProService.xcodeproj',
+      target: 'ProService',
+      build_number: next_build
     )
 
-    ipa_path = Actions.lane_context[SharedValues::IPA_OUTPUT_PATH]
-    UI.user_error!('IPA output path not found') unless ipa_path && File.exist?(ipa_path)
+    UI.success("✅ Build number incrémenté: #{next_build}")
+  end
 
-    upload_to_app_store(
-      ipa: ipa_path,
+  desc '🏗️ Build iOS IPA'
+  lane :build_ios_ipa do
+    match(
+      type: 'appstore',
+      readonly: true,
       api_key_path: ENV['APPSTORE_CONNECT_API_KEY']
     )
 
-    notify_team(status: 'succeeded', platform: 'ios', artifact: ipa_path)
-  rescue => e
-    notify_team(status: "failed (#{e.message})", platform: 'ios')
-    raise
+    gym(
+      workspace: 'ios/ProService.xcworkspace',
+      scheme: 'ProService',
+      configuration: 'Release',
+      export_method: 'app-store',
+      include_symbols: true,
+      include_bitcode: false
+    )
+
+    UI.success('✅ IPA buildé avec succès')
   end
 end
